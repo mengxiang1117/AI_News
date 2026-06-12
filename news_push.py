@@ -15,7 +15,7 @@ from openai import OpenAI
 import schedule
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fetch_all_news import fetch_all_news_sources
-from prompt import get_news_category_prompt, get_news_sentiment_prompt
+from prompt import get_news_analysis_prompt
 
 # 配置日志
 logging.basicConfig(
@@ -259,32 +259,33 @@ class NewsPusher:
         logger.error(f"所有模型都调用失败，最后错误: {last_error}")
         return []
 
-    def extract_news_sentiment(self, news: Dict) -> Dict:
+    def analyze_news(self, news: Dict) -> Tuple[List[str], Dict]:
         """
-        使用大模型分析新闻的情绪倾向（利好/利空/中性）
+        综合分析新闻（领域+情绪合并为一次API调用）
 
         Args:
             news: 新闻数据
 
         Returns:
-            情绪分析结果，包含 sentiment 和 reason
+            (领域列表, 情绪分析结果)
         """
+        categories = self.config["all_categories"]
         models = self.config["openai"].get("models", ["gpt-3.5-turbo"])
-        prompt = get_news_sentiment_prompt(news['title'], news['content'])
+        prompt = get_news_analysis_prompt(categories, news['title'], news['content'])
 
         last_error = None
         for model in models:
             try:
-                logger.debug(f"尝试使用模型 {model} 进行情绪分析")
+                logger.debug(f"尝试使用模型 {model} 进行综合分析")
                 response = self.openai_client.chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "你是一名资深财经分析师，擅长判断新闻对市场的情绪影响。"},
+                        {"role": "system", "content": "你是资深财经分析师，擅长领域识别和情绪分析。"},
                         {"role": "user", "content": prompt}
                     ],
                     reasoning_effort="minimal",
                     temperature=0.3,
-                    max_tokens=200
+                    max_tokens=300
                 )
 
                 content = response.choices[0].message.content
@@ -296,25 +297,34 @@ class NewsPusher:
                 # 提取 JSON 对象
                 json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
                 if json_match:
-                    sentiment_data = json.loads(json_match.group())
+                    result = json.loads(json_match.group())
                 else:
-                    sentiment_data = json.loads(result_text)
+                    result = json.loads(result_text)
 
-                if isinstance(sentiment_data, dict) and "sentiment" in sentiment_data:
-                    valid_sentiments = ["利好", "利空", "中性"]
-                    if sentiment_data["sentiment"] in valid_sentiments:
-                        logger.debug(f"模型 {model} 情绪分析成功: {sentiment_data['sentiment']}")
-                        return sentiment_data
+                if not isinstance(result, dict):
+                    logger.warning(f"模型 {model} 返回格式不正确: {result_text}")
+                    continue
 
-                logger.warning(f"模型 {model} 返回格式不正确: {result_text}")
+                # 提取领域
+                news_categories = result.get("categories", [])
+                valid_categories = [cat for cat in news_categories if cat in categories]
+
+                # 提取情绪
+                sentiment = result.get("sentiment", "中性")
+                reason = result.get("reason", "")
+                if sentiment not in ["利好", "利空", "中性"]:
+                    sentiment = "中性"
+
+                logger.debug(f"模型 {model} 综合分析成功")
+                return valid_categories, {"sentiment": sentiment, "reason": reason}
 
             except Exception as e:
                 last_error = e
-                logger.warning(f"模型 {model} 情绪分析失败: {e}，尝试下一个模型")
+                logger.warning(f"模型 {model} 综合分析失败: {e}，尝试下一个模型")
                 continue
 
-        logger.error(f"所有模型情绪分析都失败，最后错误: {last_error}")
-        return {"sentiment": "中性", "reason": "分析失败，默认中性"}
+        logger.error(f"所有模型综合分析都失败，最后错误: {last_error}")
+        return [], {"sentiment": "中性", "reason": "分析失败"}
 
     def match_user_interests(self, news_categories: List[str], user_interests: List[str]) -> List[str]:
         """
@@ -466,8 +476,7 @@ class NewsPusher:
         def process_news(news):
             """单条新闻处理函数"""
             try:
-                categories = self.extract_news_categories(news)
-                sentiment = self.extract_news_sentiment(news)
+                categories, sentiment = self.analyze_news(news)
                 return news, categories, sentiment
             except Exception as e:
                 logger.error(f"处理新闻失败 {news['title'][:30]}: {e}")
