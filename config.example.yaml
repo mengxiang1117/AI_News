@@ -1,0 +1,103 @@
+# 新闻精准推送配置文件
+
+# 试运行模式：true 时不发送飞书消息、不写入已推送记录
+dry_run: false
+
+# 所有用户都关心的领域列表（大模型从中选择）
+all_categories:
+  - 人工智能
+  - 算力
+  - 战争
+  - 氢能源
+  - 可控核聚变
+  - 液冷
+  - 黄金
+  - 有色金属
+  - 国际领域
+
+# OpenAI API 配置
+openai:
+  api_key: "your-api-key-here"
+  base_url: "https://api.openai.com/v1"
+  models:
+    - "gpt-3.5-turbo"
+    - "gpt-4"
+
+# 用户配置（支持多人）
+# 注意：用户的 interests 必须在上面的 all_categories 列表中选择
+users:
+  - name: "用户1"
+    # 该用户关心的领域列表（必须是 all_categories 中的值）
+    interests:
+      - 黄金
+      - 有色金属
+    # 飞书 webhook 配置
+    feishu:
+      webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-webhook-id-1"
+      secret: ""  # 签名密钥，可选
+
+  - name: "用户2"
+    interests:
+      - 人工智能
+      - 算力
+      - 战争
+      - 国际领域
+    feishu:
+      webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-webhook-id-2"
+      secret: ""
+
+  - name: "用户3"
+    interests:
+      - 氢能源
+      - 可控核聚变
+      - 液冷
+    feishu:
+      webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-webhook-id-3"
+      secret: ""
+
+# 定时任务配置
+schedule:
+  enabled: true
+  interval_minutes: 1  # 建议 1 分钟，保证及时推送新闻
+
+# 数据存储配置
+storage:
+  pushed_news_file: "pushed_news"  # 已推送新闻记录文件前缀，实际是 pushed_news_用户名.md
+  news_folder: "news"
+
+# 并发处理配置
+concurrency:
+  max_workers: 10       # 同时处理的最大文件数（大模型调用并发数）
+  user_push_workers: 3  # 同时推送的飞书用户数
+
+# 爬虫配置
+crawler:
+  max_retries: 3        # 爬取网页失败时的最大重试次数
+  retry_delay: 1        # 重试间隔（秒）
+
+# 文件清理配置
+cleanup:
+  # 定期清理是否启用
+  enabled: true
+  # 清理间隔（分钟）
+  interval_minutes: 1440
+  # 需要清理的文件夹列表
+  folders:
+    - path: "24hours_news"
+      keep_count: 50
+      file_pattern: "*.md"
+    - path: "djggjd_news"
+      keep_count: 50
+      file_pattern: "*.md"
+    - path: "djgshd_news"
+      keep_count: 50
+      file_pattern: "*.md"
+    - path: "djkuaiping_news"
+      keep_count: 50
+      file_pattern: "*.md"
+    - path: "mrnxgg_news"
+      keep_count: 50
+      file_pattern: "*.md"
+    - path: "yuanchuang_news"
+      keep_count: 50
+      file_pattern: "*.md"

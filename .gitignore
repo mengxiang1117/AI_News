@@ -1,0 +1,29 @@
+# 配置文件（包含敏感信息）
+config.yaml
+
+# 运行时生成的新闻文件
+news/
+24hours_news/
+yuanchuang_news/
+mrnxgg_news/
+djkuaiping_news/
+djgshd_news/
+djggjd_news/
+
+# 已推送记录
+pushed_news_*.md
+
+# 日志文件
+*.log
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# Claude 配置
+.claude/
+
+# 系统文件
+.DS_Store
+Thumbs.db
