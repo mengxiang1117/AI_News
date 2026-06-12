@@ -15,7 +15,7 @@ from openai import OpenAI
 import schedule
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fetch_all_news import fetch_all_news_sources
-from prompt import get_news_category_prompt
+from prompt import get_news_category_prompt, get_news_sentiment_prompt
 
 # 配置日志
 logging.basicConfig(
@@ -93,11 +93,12 @@ class NewsPusher:
                 logger.warning(f"加载用户 {user_name} 已推送记录失败: {e}")
         return pushed
 
-    def _append_pushed_news(self, user_name: str, news: Dict, categories: List[str], match_categories: List[str]):
+    def _append_pushed_news(self, user_name: str, news: Dict, categories: List[str], match_categories: List[str], sentiment: Dict):
         """追加记录已推送的新闻到用户的 Markdown 文件"""
         file_path = self._get_user_pushed_file(user_name)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        sentiment_emoji = {"利好": "🟢", "利空": "🔴", "中性": "⚪"}.get(sentiment['sentiment'], "⚪")
         md_content = f"\n## {news['title']}\n\n"
         md_content += f"**推送时间**: {now}\n\n"
         md_content += f"**文件名**: `{news['id']}.md`\n\n"
@@ -105,6 +106,7 @@ class NewsPusher:
         md_content += f"**来源**: {news['source']}\n\n"
         md_content += f"**新闻相关领域**: {', '.join(categories)}\n\n"
         md_content += f"**用户匹配领域**: {', '.join(match_categories)}\n\n"
+        md_content += f"**市场情绪**: {sentiment_emoji} {sentiment['sentiment']} - {sentiment['reason']}\n\n"
         md_content += f"**原文链接**: {news['url']}\n\n"
         md_content += f"---\n\n"
         md_content += f"**内容摘要**:\n\n{news['content']}...\n\n"
@@ -257,6 +259,63 @@ class NewsPusher:
         logger.error(f"所有模型都调用失败，最后错误: {last_error}")
         return []
 
+    def extract_news_sentiment(self, news: Dict) -> Dict:
+        """
+        使用大模型分析新闻的情绪倾向（利好/利空/中性）
+
+        Args:
+            news: 新闻数据
+
+        Returns:
+            情绪分析结果，包含 sentiment 和 reason
+        """
+        models = self.config["openai"].get("models", ["gpt-3.5-turbo"])
+        prompt = get_news_sentiment_prompt(news['title'], news['content'])
+
+        last_error = None
+        for model in models:
+            try:
+                logger.debug(f"尝试使用模型 {model} 进行情绪分析")
+                response = self.openai_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "你是一名资深财经分析师，擅长判断新闻对市场的情绪影响。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    reasoning_effort="minimal",
+                    temperature=0.3,
+                    max_tokens=200
+                )
+
+                content = response.choices[0].message.content
+                if not content:
+                    logger.warning(f"模型 {model} 返回空内容，尝试下一个")
+                    continue
+                result_text = content.strip()
+
+                # 提取 JSON 对象
+                json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+                if json_match:
+                    sentiment_data = json.loads(json_match.group())
+                else:
+                    sentiment_data = json.loads(result_text)
+
+                if isinstance(sentiment_data, dict) and "sentiment" in sentiment_data:
+                    valid_sentiments = ["利好", "利空", "中性"]
+                    if sentiment_data["sentiment"] in valid_sentiments:
+                        logger.debug(f"模型 {model} 情绪分析成功: {sentiment_data['sentiment']}")
+                        return sentiment_data
+
+                logger.warning(f"模型 {model} 返回格式不正确: {result_text}")
+
+            except Exception as e:
+                last_error = e
+                logger.warning(f"模型 {model} 情绪分析失败: {e}，尝试下一个模型")
+                continue
+
+        logger.error(f"所有模型情绪分析都失败，最后错误: {last_error}")
+        return {"sentiment": "中性", "reason": "分析失败，默认中性"}
+
     def match_user_interests(self, news_categories: List[str], user_interests: List[str]) -> List[str]:
         """
         匹配新闻领域和用户兴趣
@@ -294,7 +353,7 @@ class NewsPusher:
             logger.error(f"生成签名失败: {e}")
             return ""
 
-    def push_to_feishu(self, news: Dict, news_categories: List[str], match_categories: List[str], user_config: Dict) -> bool:
+    def push_to_feishu(self, news: Dict, news_categories: List[str], match_categories: List[str], sentiment: Dict, user_config: Dict) -> bool:
         """
         推送新闻到飞书
 
@@ -302,6 +361,7 @@ class NewsPusher:
             news: 新闻数据
             news_categories: 新闻相关领域
             match_categories: 匹配到的用户领域
+            sentiment: 情绪分析结果
             user_config: 用户配置
 
         Returns:
@@ -315,10 +375,12 @@ class NewsPusher:
         sign = self._gen_feishu_sign(secret, timestamp)
 
         # 构建富文本消息
+        sentiment_emoji = {"利好": "🟢", "利空": "🔴", "中性": "⚪"}.get(sentiment['sentiment'], "⚪")
         content = f"**发布时间**: {news['time']}\n"
         content += f"**来源**: {news['source']}\n"
         content += f"**新闻相关领域**: {', '.join(news_categories)}\n"
-        content += f"**匹配您的领域**: {', '.join(match_categories)}\n\n"
+        content += f"**匹配您的领域**: {', '.join(match_categories)}\n"
+        content += f"**市场情绪**: {sentiment_emoji} {sentiment['sentiment']} - {sentiment['reason']}\n\n"
         content += f"---\n\n"
         content += f"{news['content']}..."
 
@@ -355,7 +417,7 @@ class NewsPusher:
         if self.config.get("dry_run", False):
             logger.info(
                 f"[ {user_config['name']} ] DRY RUN 跳过飞书推送: "
-                f"{news['title']} | 匹配领域: {', '.join(match_categories)}"
+                f"{news['title']} | 匹配领域: {', '.join(match_categories)} | 情绪: {sentiment['sentiment']}"
             )
             return True
 
@@ -405,19 +467,20 @@ class NewsPusher:
             """单条新闻处理函数"""
             try:
                 categories = self.extract_news_categories(news)
-                return news, categories
+                sentiment = self.extract_news_sentiment(news)
+                return news, categories, sentiment
             except Exception as e:
                 logger.error(f"处理新闻失败 {news['title'][:30]}: {e}")
-                return news, []
+                return news, [], {"sentiment": "中性", "reason": "处理失败"}
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_news = {executor.submit(process_news, news): news for news in news_list}
 
             for future in as_completed(future_to_news):
-                news, categories = future.result()
+                news, categories, sentiment = future.result()
                 if categories:
-                    logger.info(f"[分析完成] {news['title'][:40]} -> 相关领域: {', '.join(categories)}")
-                    news_with_categories.append((news, categories))
+                    logger.info(f"[分析完成] {news['title'][:40]} -> 相关领域: {', '.join(categories)} | 情绪: {sentiment['sentiment']}")
+                    news_with_categories.append((news, categories, sentiment))
                 else:
                     logger.info(f"[分析完成] {news['title'][:40]} -> 无相关领域，跳过")
 
@@ -448,7 +511,7 @@ class NewsPusher:
 
             logger.info(f"\n--- 处理用户: {user_name} (关心领域: {', '.join(user_interests)}) ---")
 
-            for news, categories in news_with_categories:
+            for news, categories, sentiment in news_with_categories:
                 news_id = news["id"]
 
                 if news_id in user_pushed:
@@ -461,14 +524,14 @@ class NewsPusher:
                     logger.debug(f"[ {user_name} ] 未匹配到领域，跳过: {news['title'][:30]}")
                     continue
 
-                logger.info(f"[ {user_name} ] 匹配到领域: {', '.join(match_categories)}")
+                logger.info(f"[ {user_name} ] 匹配到领域: {', '.join(match_categories)} | 情绪: {sentiment['sentiment']}")
                 logger.info(f"[ {user_name} ] 正在推送: {news['title'][:30]}...")
 
-                if self.push_to_feishu(news, categories, match_categories, user_config):
+                if self.push_to_feishu(news, categories, match_categories, sentiment, user_config):
                     pushed_count += 1
                     if not dry_run:
                         user_pushed[news_id] = "1"
-                        self._append_pushed_news(user_name, news, categories, match_categories)
+                        self._append_pushed_news(user_name, news, categories, match_categories, sentiment)
                         time.sleep(1)
 
             logger.info(f"[ {user_name} ] 完成! 本次推送 {pushed_count} 条新闻")
