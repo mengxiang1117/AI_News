@@ -98,7 +98,7 @@ class NewsPusher:
         file_path = self._get_user_pushed_file(user_name)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        sentiment_emoji = {"利好": "🟢", "利空": "🔴", "中性": "⚪"}.get(sentiment['sentiment'], "⚪")
+        sentiment_emoji = {"利好": "🔴", "利空": "🟢", "中性": "⚪"}.get(sentiment['sentiment'], "⚪")
         md_content = f"\n## {news['title']}\n\n"
         md_content += f"**推送时间**: {now}\n\n"
         md_content += f"**文件名**: `{news['id']}.md`\n\n"
@@ -375,7 +375,7 @@ class NewsPusher:
         sign = self._gen_feishu_sign(secret, timestamp)
 
         # 构建富文本消息
-        sentiment_emoji = {"利好": "🟢", "利空": "🔴", "中性": "⚪"}.get(sentiment['sentiment'], "⚪")
+        sentiment_emoji = {"利好": "🔴", "利空": "🟢", "中性": "⚪"}.get(sentiment['sentiment'], "⚪")
         content = f"**发布时间**: {news['time']}\n"
         content += f"**来源**: {news['source']}\n"
         content += f"**新闻相关领域**: {', '.join(news_categories)}\n"
