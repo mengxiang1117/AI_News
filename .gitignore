@@ -24,6 +24,8 @@ __pycache__/
 # Claude 配置
 .claude/
 
+# VsCode 配置
+.vscode/
 # 系统文件
 .DS_Store
 Thumbs.db
